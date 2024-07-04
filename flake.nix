@@ -16,7 +16,7 @@
 	  netogallo-pkgs = import ./default.nix { nixpkgs = pkgs; };
 	in
 	{
-	  packages = netogallo-pkgs;
+	  legacyPackages = netogallo-pkgs;
 	};
     };
 }
