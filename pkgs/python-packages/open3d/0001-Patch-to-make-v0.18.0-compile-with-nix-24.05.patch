@@ -1,0 +1,299 @@
+From bcdc89a4db4a2c4d8745cc740b5e623bd8dfaa37 Mon Sep 17 00:00:00 2001
+From: Ernesto Rodriguez <connect@netowork.me>
+Date: Thu, 4 Jul 2024 05:32:17 +0000
+Subject: [PATCH] Patch to make v0.18.0 compile with nix 24.05.
+
+---
+ 3rdparty/find_dependencies.cmake            | 24 +++++------
+ CMakeLists.txt                              |  1 +
+ cpp/apps/CMakeLists.txt                     |  4 +-
+ cpp/open3d/t/geometry/TriangleMesh.cpp      |  6 +++
+ cpp/open3d/t/geometry/TriangleMesh.h        |  3 +-
+ cpp/open3d/t/geometry/kernel/CMakeLists.txt | 44 ++++++++++++++-------
+ cpp/open3d/utility/Logging.h                | 15 +++++++
+ cpp/open3d/visualization/gui/ListView.cpp   |  8 ++--
+ cpp/pybind/t/geometry/trianglemesh.cpp      |  3 ++
+ examples/cpp/OnlineSLAMUtil.h               |  3 +-
+ 10 files changed, 78 insertions(+), 33 deletions(-)
+
+diff --git a/3rdparty/find_dependencies.cmake b/3rdparty/find_dependencies.cmake
+index 169bfbe1a..47c6f97de 100644
+--- a/3rdparty/find_dependencies.cmake
++++ b/3rdparty/find_dependencies.cmake
+@@ -853,6 +853,7 @@ if(USE_SYSTEM_CURL)
+     if(NOT 3rdparty_curl_FOUND)
+         set(USE_SYSTEM_CURL OFF)
+     endif()
++
+ endif()
+ if(NOT USE_SYSTEM_CURL)
+     if(USE_SYSTEM_OPENSSL)
+@@ -1131,7 +1132,7 @@ list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM Open3D::3rdparty_poisson
+ # Minizip
+ if(WITH_MINIZIP)
+     open3d_pkg_config_3rdparty_library(3rdparty_minizip
+-        SEARCH_ARGS minizip
++      SEARCH_ARGS minizip
+     )
+     list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_SYSTEM Open3D::3rdparty_minizip)
+ endif()
+@@ -1525,16 +1526,17 @@ endif()
+ list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM Open3D::3rdparty_vtk)
+ 
+ # UVAtlas
+-include(${Open3D_3RDPARTY_DIR}/uvatlas/uvatlas.cmake)
+-open3d_import_3rdparty_library(3rdparty_uvatlas
+-    HIDDEN
+-    INCLUDE_DIRS ${UVATLAS_INCLUDE_DIRS}
+-    LIB_DIR      ${UVATLAS_LIB_DIR}
+-    LIBRARIES    ${UVATLAS_LIBRARIES}
+-    DEPENDS      ext_uvatlas
+-)
+-list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM Open3D::3rdparty_uvatlas)
+-
++if(WITH_UV_ATLAS)
++  include(${Open3D_3RDPARTY_DIR}/uvatlas/uvatlas.cmake)
++  open3d_import_3rdparty_library(3rdparty_uvatlas
++      HIDDEN
++      INCLUDE_DIRS ${UVATLAS_INCLUDE_DIRS}
++      LIB_DIR      ${UVATLAS_LIB_DIR}
++      LIBRARIES    ${UVATLAS_LIBRARIES}
++      DEPENDS      ext_uvatlas
++  )
++  list(APPEND Open3D_3RDPARTY_PRIVATE_TARGETS_FROM_CUSTOM Open3D::3rdparty_uvatlas)
++endif()
+ 
+ if(BUILD_SYCL_MODULE)
+     add_library(3rdparty_sycl INTERFACE)
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a87d542b5..f30588210 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -122,6 +122,7 @@ else()
+     option(BUILD_VTK_FROM_SOURCE      "Build VTK from source"                OFF)
+     option(BUILD_FILAMENT_FROM_SOURCE "Build filament from source"           OFF)
+ endif()
++option(WITH_UV_ATLAS         "Support the UVAtlas functions on TriangleMesh (requires uvatlas and DirectX)" ON)
+ 
+ option(PREFER_OSX_HOMEBREW        "Prefer Homebrew libs over frameworks"     ON )
+ option(WITH_MINIZIP               "Enable MiniZIP"                           OFF)
+diff --git a/cpp/apps/CMakeLists.txt b/cpp/apps/CMakeLists.txt
+index 8b718c996..8d5bc9444 100644
+--- a/cpp/apps/CMakeLists.txt
++++ b/cpp/apps/CMakeLists.txt
+@@ -54,7 +54,9 @@ macro(open3d_add_app_gui SRC_DIR APP_NAME TARGET_NAME)
+             install(DIRECTORY   "${APP_DIR}"
+                     DESTINATION "${CMAKE_INSTALL_PREFIX}/bin"
+                     USE_SOURCE_PERMISSIONS)
+-            if (CMAKE_INSTALL_PREFIX MATCHES "^(/usr/local|/opt)")
++	    if (DEFINED OVERRIDE_DESKTOP_INSTALL_DIR)
++	      set(DESKTOP_INSTALL_DIR "${OVERRIDE_DESKTOP_INSTALL_DIR}")
++	    elseif (CMAKE_INSTALL_PREFIX MATCHES "^(/usr/local|/opt)")
+                 set(DESKTOP_INSTALL_DIR "/usr/share")
+             else()
+                 set(DESKTOP_INSTALL_DIR "$ENV{HOME}/.local/share")
+diff --git a/cpp/open3d/t/geometry/TriangleMesh.cpp b/cpp/open3d/t/geometry/TriangleMesh.cpp
+index 6f33f8e44..22f730af9 100644
+--- a/cpp/open3d/t/geometry/TriangleMesh.cpp
++++ b/cpp/open3d/t/geometry/TriangleMesh.cpp
+@@ -32,7 +32,10 @@
+ #include "open3d/t/geometry/kernel/PointCloud.h"
+ #include "open3d/t/geometry/kernel/Transform.h"
+ #include "open3d/t/geometry/kernel/TriangleMesh.h"
++
++#ifdef WITH_UV_ATLAS
+ #include "open3d/t/geometry/kernel/UVUnwrapping.h"
++#endif
+ #include "open3d/utility/ParallelScan.h"
+ 
+ namespace open3d {
+@@ -703,6 +706,8 @@ TriangleMesh TriangleMesh::FillHoles(double hole_size) const {
+     return CreateTriangleMeshFromVtkPolyData(result);
+ }
+ 
++#ifdef WITH_UV_ATLAS
++
+ std::tuple<float, int, int> TriangleMesh::ComputeUVAtlas(
+         size_t size,
+         float gutter,
+@@ -713,6 +718,7 @@ std::tuple<float, int, int> TriangleMesh::ComputeUVAtlas(
+                                                 max_stretch,
+                                                 parallel_partitions, nthreads);
+ }
++#endif
+ 
+ namespace {
+ /// Bakes vertex or triangle attributes to a texure.
+diff --git a/cpp/open3d/t/geometry/TriangleMesh.h b/cpp/open3d/t/geometry/TriangleMesh.h
+index 7824f193b..63ad4e13b 100644
+--- a/cpp/open3d/t/geometry/TriangleMesh.h
++++ b/cpp/open3d/t/geometry/TriangleMesh.h
+@@ -829,12 +829,13 @@ public:
+     /// \return Tuple with (max stretch, num_charts, num_partitions) storing the
+     /// actual amount of stretch, the number of created charts, and the number
+     /// of parallel partitions created.
++#ifdef WITH_UV_ATLAS
+     std::tuple<float, int, int> ComputeUVAtlas(size_t size = 512,
+                                                float gutter = 1.0f,
+                                                float max_stretch = 1.f / 6,
+                                                int parallel_partitions = 1,
+                                                int nthreads = 0);
+-
++#endif
+     /// Bake vertex attributes into textures.
+     ///
+     /// This function assumes a triangle attribute with name 'texture_uvs'.
+diff --git a/cpp/open3d/t/geometry/kernel/CMakeLists.txt b/cpp/open3d/t/geometry/kernel/CMakeLists.txt
+index 081d24a6b..582d5136c 100644
+--- a/cpp/open3d/t/geometry/kernel/CMakeLists.txt
++++ b/cpp/open3d/t/geometry/kernel/CMakeLists.txt
+@@ -1,19 +1,35 @@
+ open3d_ispc_add_library(tgeometry_kernel OBJECT)
+ 
+-target_sources(tgeometry_kernel PRIVATE
+-    Image.cpp
+-    ImageCPU.cpp
+-    PCAPartition.cpp
+-    PointCloud.cpp
+-    PointCloudCPU.cpp
+-    TriangleMesh.cpp
+-    TriangleMeshCPU.cpp
+-    Transform.cpp
+-    TransformCPU.cpp
+-    UVUnwrapping.cpp
+-    VoxelBlockGrid.cpp
+-    VoxelBlockGridCPU.cpp
+-)
++if (WITH_UV_ATLAS)
++  target_sources(tgeometry_kernel PRIVATE
++      Image.cpp
++      ImageCPU.cpp
++      PCAPartition.cpp
++      PointCloud.cpp
++      PointCloudCPU.cpp
++      TriangleMesh.cpp
++      TriangleMeshCPU.cpp
++      Transform.cpp
++      TransformCPU.cpp
++      UVUnwrapping.cpp
++      VoxelBlockGrid.cpp
++      VoxelBlockGridCPU.cpp
++  )
++else()
++  target_sources(tgeometry_kernel PRIVATE
++      Image.cpp
++      ImageCPU.cpp
++      PCAPartition.cpp
++      PointCloud.cpp
++      PointCloudCPU.cpp
++      TriangleMesh.cpp
++      TriangleMeshCPU.cpp
++      Transform.cpp
++      TransformCPU.cpp
++      VoxelBlockGrid.cpp
++      VoxelBlockGridCPU.cpp
++  )
++endif()
+ 
+ if (BUILD_CUDA_MODULE)
+     target_sources(tgeometry_kernel PRIVATE
+diff --git a/cpp/open3d/utility/Logging.h b/cpp/open3d/utility/Logging.h
+index 15fe28fa5..8f038976e 100644
+--- a/cpp/open3d/utility/Logging.h
++++ b/cpp/open3d/utility/Logging.h
+@@ -22,6 +22,8 @@
+ #include <fmt/printf.h>
+ #include <fmt/ranges.h>
+ 
++#include <type_traits>
++
+ #define DEFAULT_IO_BUFFER_SIZE 1024
+ 
+ #include "open3d/Macro.h"
+@@ -259,3 +261,16 @@ private:
+ 
+ }  // namespace utility
+ }  // namespace open3d
++
++// Version v10 of fmt library does not have a formatter for enums.
++// See: https://github.com/fmtlib/fmt/issues/3720
++template <typename EnumType>
++struct fmt::formatter<EnumType, std::enable_if_t<std::is_enum<EnumType>::value, char>> : fmt::formatter<int>
++{
++    auto format(const EnumType& enumValue, format_context& ctx) const
++    {
++        return fmt::formatter<int>::format(
++            static_cast<int>(enumValue), ctx);
++    }
++};
++
+diff --git a/cpp/open3d/visualization/gui/ListView.cpp b/cpp/open3d/visualization/gui/ListView.cpp
+index 4d77f0bd1..582cfbb90 100644
+--- a/cpp/open3d/visualization/gui/ListView.cpp
++++ b/cpp/open3d/visualization/gui/ListView.cpp
+@@ -116,15 +116,13 @@ Widget::DrawResult ListView::Draw(const DrawContext &context) {
+     ImGui::PushStyleColor(ImGuiCol_HeaderActive,  // click-hold color
+                           colorToImgui(context.theme.list_selected_color));
+ 
+-    int height_in_items =
+-            int(std::floor(frame.height / ImGui::GetFrameHeight()));
+ 
+     auto result = Widget::DrawResult::NONE;
+     auto new_selected_idx = impl_->selected_index_;
+     bool is_double_click = false;
+     DrawImGuiPushEnabledState();
+-    if (ImGui::ListBoxHeader(impl_->imgui_id_.c_str(),
+-                             int(impl_->items_.size()), height_in_items)) {
++    ImVec2 initial_size(0, ImGui::GetFrameHeight());
++    if (ImGui::BeginListBox(impl_->imgui_id_.c_str(), initial_size)) {
+         for (size_t i = 0; i < impl_->items_.size(); ++i) {
+             bool is_selected = (int(i) == impl_->selected_index_);
+             // ImGUI's list wants to hover over items, which is not done by
+@@ -155,7 +153,7 @@ Widget::DrawResult ListView::Draw(const DrawContext &context) {
+             }
+             ImGui::PopStyleColor();
+         }
+-        ImGui::ListBoxFooter();
++        ImGui::EndListBox();
+ 
+         if (new_selected_idx != impl_->selected_index_ || is_double_click) {
+             impl_->selected_index_ = new_selected_idx;
+diff --git a/cpp/pybind/t/geometry/trianglemesh.cpp b/cpp/pybind/t/geometry/trianglemesh.cpp
+index 6285b00c6..14aaaa52d 100644
+--- a/cpp/pybind/t/geometry/trianglemesh.cpp
++++ b/cpp/pybind/t/geometry/trianglemesh.cpp
+@@ -674,6 +674,8 @@ Example:
+         o3d.visualization.draw([{'name': 'filled', 'geometry': ans}])
+ )");
+ 
++#ifdef WITH_UV_ATLAS
++
+     triangle_mesh.def(
+             "compute_uvatlas", &TriangleMesh::ComputeUVAtlas, "size"_a = 512,
+             "gutter"_a = 1.f, "max_stretch"_a = 1.f / 6,
+@@ -724,6 +726,7 @@ Example:
+         mesh.material.texture_maps['albedo'] = o3d.t.io.read_image(texture_data.albedo_texture_path)
+         o3d.visualization.draw(mesh)
+ )");
++#endif
+ 
+     triangle_mesh.def("bake_vertex_attr_textures",
+                       &TriangleMesh::BakeVertexAttrTextures, "size"_a,
+diff --git a/examples/cpp/OnlineSLAMUtil.h b/examples/cpp/OnlineSLAMUtil.h
+index 585f18a8f..5acec40b2 100644
+--- a/examples/cpp/OnlineSLAMUtil.h
++++ b/examples/cpp/OnlineSLAMUtil.h
+@@ -619,8 +619,9 @@ protected:
+                         surface_.pcd.HasPointPositions()
+                                 ? surface_.pcd.GetPointPositions().GetLength()
+                                 : 0;
++		int estimated_points = prop_values_.estimated_points;
+                 info << fmt::format("Surface points: {}/{}\n", len,
+-                                    prop_values_.estimated_points)
++                                    estimated_points)
+                      << "\n";
+             }
+ 
+-- 
+2.44.1
+
