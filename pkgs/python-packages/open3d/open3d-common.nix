@@ -1,22 +1,46 @@
 {
+  callPackage,
+  fetchFromGitHub,
   lib,
   buildPythonPackage,
   pkgs,
-  python3,
-  embree3
+  embree3,
+  imgui,
+  python3
 }:
-
+let
+  poissonrecon-src = fetchFromGitHub {
+    owner = "isl-org";
+    repo = "Open3D-PoissonRecon";
+    rev = "90f3f064e275b275cff445881ecee5a7c495c9e0";
+    hash = "sha256-0cHy3KxvhiJxVrVh/j1FcFMy60o5mQedIapZrOjKhQo=";
+  };
+  parallelstl-src = fetchFromGitHub {
+    owner = "oneapi-src";
+    repo = "oneDPL";
+    rev = "20190522";
+    hash = "sha256-6n8BgcubkxGP/VUhjsvw6ARUYS0UYY9s6NHX3D4R2lg=";
+  };
+  tinygltf-src = fetchFromGitHub {
+    owner = "syoyo";
+    repo = "tinygltf";
+    rev = "72f4a55edd54742bca1a71ade8ac70afca1d3f07";
+    hash = "sha256-vlVhDH2/vOKn+iQWhVUFIEe5uNDeQ51i5ZTx7uCSeLY=";
+  };
+in
 buildPythonPackage {
   pname = "open3d-cpu";
   version = "0.18.0";
   pyproject = false;
+  inherit parallelstl-src poissonrecon-src tinygltf-src; 
   src = fetchTarball { url = "https://github.com/isl-org/Open3D/archive/refs/tags/v0.18.0.tar.gz"; sha256 = "1qpjxscnkw1mqgpjb6dkfdvwlr6l8gzj7x9nz133hlynhxcs9k2l"; };
   patches = [
-    ./0001-Patch-to-make-v0.18.0-compile-with-nix-24.05.patch 
+    ./0001-Patch-to-allow-v0.18.0-to-compile-under-nix.patch
   ];
   build-system = with pkgs; [
     cmake
     git
+    imgui
     openssl
     pkg-config
     python3.pkgs.pypaInstallHook
@@ -70,9 +94,11 @@ buildPythonPackage {
     desktopOverrideFlag="-DOVERRIDE_DESKTOP_INSTALL_DIR=$out/share"
     cxxOverridesFlag="-Wno-error=array-bounds -fpermissive -Wno-error=changes-meaning -Wno-error=unused-variable -Wno-error=pessimizing-move -Wno-error=unused-function"
     cmakeFlagsArray+=($desktopOverrideFlag -DCMAKE_CXX_FLAGS="$cxxOverridesFlag")
+    echo poissonrecon: ${poissonrecon-src}
   '';
   makeFlags = [ "pip-package" ];
   cmakeFlags = [ 
+    "-DBUILD_GUI=OFF"
     "-DOPEN3D_USE_ONEAPI_PACKAGES=OFF"
     "-DUSE_BLAS=ON" 
     "-DBUNDLE_OPEN3D_ML=OFF"
@@ -90,7 +116,7 @@ buildPythonPackage {
     "-DUSE_SYSTEM_CURL=ON"
     "-DUSE_SYSTEM_CUTLASS=ON"
     "-DUSE_SYSTEM_EIGEN3=ON"
-    "-DUSE_SYSTEM_FILAMENT=OFF"
+    "-DUSE_SYSTEM_FILAMENT=ON"
     "-DUSE_SYSTEM_FMT=ON"
     "-DUSE_SYSTEM_GLEW=ON"
     "-DUSE_SYSTEM_GLFW=ON"
@@ -116,6 +142,10 @@ buildPythonPackage {
     "-DUSE_SYSTEM_TBB=ON"
     "-DUSE_SYSTEM_FMT=ON"
     "-DUSE_SYSTEM_EMBREE=ON"
+    "-DUSE_SYSTEM_MESA=ON"
+    "-DPOISSONRECON_SRC_DIR=${poissonrecon-src}"
+    "-DPARALLELSTL_SRC_DIR=${parallelstl-src}"
+    "-DTINYGLTF_SRC_DIR=${tinygltf-src}"
   ];
   preInstall = ''
     mkdir -p dist/
